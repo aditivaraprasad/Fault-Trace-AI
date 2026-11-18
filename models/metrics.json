@@ -1,0 +1,54 @@
+{
+  "evaluation_timestamp": "2026-11-18T00:37:31Z",
+  "model_architecture": "XGBoost Classifier + Calibration",
+  "calibration_method": "isotonic",
+  "features_count": 27,
+  "dataset_summary": {
+    "total_scenarios": 2500,
+    "total_candidate_rows": 30634,
+    "train_scenarios": 1750,
+    "val_scenarios": 375,
+    "test_scenarios": 375,
+    "test_candidates_count": 4577
+  },
+  "test_metrics": {
+    "top_1_localization_accuracy_pct": 62.67,
+    "top_3_localization_accuracy_pct": 89.33,
+    "binary_accuracy": 0.9207,
+    "precision": 0.6364,
+    "recall": 0.0747,
+    "f1_score": 0.1337,
+    "confusion_matrix": {
+      "true_negative": 4186,
+      "false_positive": 16,
+      "false_negative": 347,
+      "true_positive": 28
+    },
+    "brier_score": 0.06696,
+    "log_loss": 0.23591,
+    "expected_calibration_error_ece": 0.0054,
+    "mean_inference_latency_per_scenario_ms": 0.028
+  },
+  "top_5_predictive_features": [
+    [
+      "downstream_outage_fraction",
+      0.50405
+    ],
+    [
+      "downstream_dt_count",
+      0.13479
+    ],
+    [
+      "estimated_voltage_drop_v",
+      0.09558
+    ],
+    [
+      "distance_from_substation_km",
+      0.02565
+    ],
+    [
+      "depth",
+      0.02427
+    ]
+  ]
+}

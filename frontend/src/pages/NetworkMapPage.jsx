@@ -1,0 +1,324 @@
+import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from 'react-leaflet';
+import L from 'leaflet';
+import {
+  MapPin,
+  Zap,
+  Building,
+  Activity,
+  Layers,
+  Filter,
+  RefreshCw,
+  Info,
+  ShieldAlert,
+} from 'lucide-react';
+import { api } from '../services/api';
+import LoadingSpinner from '../components/LoadingSpinner';
+import ErrorMessage from '../components/ErrorMessage';
+import StatusBadge from '../components/StatusBadge';
+
+// Fix Leaflet DivIcon generators for Control-Room GIS
+const createSubstationIcon = (code) => L.divIcon({
+  className: 'custom-substation-icon',
+  html: `<div style="background-color: #0F172A; border: 2px solid #F59E0B; color: #F59E0B; border-radius: 6px; padding: 3px 6px; font-weight: bold; font-size: 10px; display: flex; align-items: center; gap: 3px; box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);">
+    <span>⚡</span><span>${code}</span>
+  </div>`,
+  iconSize: [60, 24],
+  iconAnchor: [30, 12],
+});
+
+const createCriticalLoadIcon = (name, tier) => L.divIcon({
+  className: 'custom-critical-icon',
+  html: `<div style="background-color: #7F1D1D; border: 2px solid #EF4444; color: #FEE2E2; border-radius: 6px; padding: 3px 6px; font-weight: bold; font-size: 10px; display: flex; align-items: center; gap: 4px; box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);">
+    <span>🚨</span><span>${name} [T${tier}]</span>
+  </div>`,
+  iconSize: [120, 24],
+  iconAnchor: [60, 12],
+});
+
+const createTieSwitchIcon = (code) => L.divIcon({
+  className: 'custom-tie-icon',
+  html: `<div style="background-color: #1E293B; border: 2px dashed #94A3B8; color: #E2E8F0; border-radius: 4px; padding: 2px 5px; font-size: 9px; font-weight: bold;">
+    <span>⚲ NO: ${code}</span>
+  </div>`,
+  iconSize: [80, 20],
+  iconAnchor: [40, 10],
+});
+
+export default function NetworkMapPage({ candidateSectionIds = [], affectedSectionIds = [] }) {
+  const [topology, setTopology] = useState(null);
+  const [selectedFeeder, setSelectedFeeder] = useState('ALL');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    loadTopology();
+  }, [selectedFeeder]);
+
+  const loadTopology = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const feederId = selectedFeeder === 'ALL' ? null : parseInt(selectedFeeder);
+      const data = await api.getTopology(feederId);
+      setTopology(data);
+    } catch (err) {
+      setError(err.message || 'Failed to load network topology GIS data.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading && !topology) return <LoadingSpinner message="Rendering GIS electrical network..." fullPage />;
+  if (error && !topology) return <ErrorMessage message={error} onRetry={loadTopology} className="m-6" />;
+  if (!topology) return null;
+
+  // Center on Bangalore North Hebbal
+  const center = [13.0358, 77.5970];
+
+  return (
+    <div className="h-[calc(100vh-4rem)] flex flex-col bg-control-bg">
+      {/* Top Filter & Legend Bar */}
+      <div className="bg-control-panel border-b border-control-border px-6 py-3 flex flex-wrap items-center justify-between gap-4 z-20">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 text-white text-xs font-bold uppercase tracking-wider">
+            <Layers className="w-4 h-4 text-orange-500" />
+            <span>GIS Grid Topology</span>
+          </div>
+          <span className="text-[11px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded">
+            Synthetic Coordinates (Bengaluru Grid Region)
+          </span>
+        </div>
+
+        {/* Feeder Filter */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400 font-medium">Filter Feeder:</span>
+            <select
+              value={selectedFeeder}
+              onChange={(e) => setSelectedFeeder(e.target.value)}
+              className="bg-control-card border border-control-border text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-orange-500"
+            >
+              <option value="ALL">All Feeders (8 Total)</option>
+              {topology.feeders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.feeder_code} - {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={loadTopology}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition"
+            title="Reload Network Topology"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Map Container */}
+      <div className="flex-1 relative">
+        <MapContainer
+          center={center}
+          zoom={13}
+          style={{ height: '100%', width: '100%', background: '#0B1120' }}
+        >
+          {/* Dark CartoDB tile layer */}
+          <TileLayer
+            attribution='&copy; <a href="https://carto.com/">CartoDB</a> Dark Matter'
+            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          />
+
+          {/* 1. Feeder Sections (Polylines) */}
+          {topology.sections.map((sec) => {
+            const isCandidate = candidateSectionIds.includes(sec.id);
+            const isAffected = affectedSectionIds.includes(sec.id);
+            const isDeEnergized = sec.status === 'DE_ENERGIZED' || isAffected;
+
+            let strokeColor = '#0284C7'; // Healthy trunk blue
+            let strokeWidth = 3;
+            let opacity = 0.85;
+
+            if (isCandidate) {
+              strokeColor = '#F97316'; // Glowing candidate orange
+              strokeWidth = 6;
+              opacity = 1.0;
+            } else if (isDeEnergized) {
+              strokeColor = '#EF4444'; // Interrupted red
+              strokeWidth = 4;
+            }
+
+            return (
+              <Polyline
+                key={`sec-${sec.id}`}
+                positions={[
+                  [sec.start_latitude, sec.start_longitude],
+                  [sec.end_latitude, sec.end_longitude],
+                ]}
+                pathOptions={{
+                  color: strokeColor,
+                  weight: strokeWidth,
+                  opacity: opacity,
+                  dashArray: isCandidate ? '8, 4' : null,
+                }}
+              >
+                <Popup>
+                  <div className="text-xs p-1 space-y-1">
+                    <div className="font-bold text-slate-900 flex items-center justify-between gap-3">
+                      <span>Section: {sec.section_code}</span>
+                      {isCandidate && (
+                        <span className="bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded text-[10px] uppercase font-bold">
+                          Candidate
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-slate-600">
+                      <div>Length: {sec.length_km} km</div>
+                      <div>Conductor: {sec.conductor_type || 'ACSR'}</div>
+                      <div>Capacity: {sec.rated_capacity_kva} kVA</div>
+                      <div>Status: <strong>{sec.status}</strong></div>
+                    </div>
+                  </div>
+                </Popup>
+              </Polyline>
+            );
+          })}
+
+          {/* 2. Substations */}
+          {topology.substations.map((sub) => (
+            <Marker
+              key={`sub-${sub.id}`}
+              position={[sub.latitude, sub.longitude]}
+              icon={createSubstationIcon(sub.code)}
+            >
+              <Popup>
+                <div className="text-xs p-1 space-y-1 text-slate-800">
+                  <div className="font-bold text-base text-slate-900">{sub.name}</div>
+                  <div>Code: <strong>{sub.code}</strong></div>
+                  <div>Voltage: {sub.voltage_kv} kV</div>
+                  <div>Capacity: {sub.capacity_mva} MVA</div>
+                  <div>Division: {sub.division}</div>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {/* 3. Distribution Transformers (Circle Markers) */}
+          {topology.transformers.map((dt) => {
+            const isOffline = dt.current_load_kva === 0;
+            return (
+              <CircleMarker
+                key={`dt-${dt.id}`}
+                center={[dt.latitude, dt.longitude]}
+                radius={5}
+                pathOptions={{
+                  fillColor: isOffline ? '#EF4444' : '#10B981',
+                  fillOpacity: 0.9,
+                  color: '#FFFFFF',
+                  weight: 1.5,
+                }}
+              >
+                <Popup>
+                  <div className="text-xs p-1 space-y-1 text-slate-800">
+                    <div className="font-bold text-slate-900">Transformer: {dt.transformer_code}</div>
+                    <div>Rated: {dt.rated_kva} kVA</div>
+                    <div>Current Load: {dt.current_load_kva} kVA</div>
+                    <div>Load Percentage: {dt.load_percentage}%</div>
+                    <div>Status: <strong>{isOffline ? 'DE-ENERGIZED (0V)' : 'HEALTHY (230V)'}</strong></div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            );
+          })}
+
+          {/* 4. Critical Facilities */}
+          {topology.critical_loads.map((crit) => {
+            // Find section coordinates
+            const sec = topology.sections.find(s => s.id === crit.section_id);
+            if (!sec) return null;
+            return (
+              <Marker
+                key={`crit-${crit.id}`}
+                position={[sec.end_latitude, sec.end_longitude]}
+                icon={createCriticalLoadIcon(crit.facility_name, crit.priority_tier)}
+              >
+                <Popup>
+                  <div className="text-xs p-1 space-y-1 text-slate-800">
+                    <div className="font-bold text-rose-700 text-sm">Critical Load: {crit.facility_name}</div>
+                    <div>Facility Type: {crit.facility_type}</div>
+                    <div>Priority Tier: Tier {crit.priority_tier} (Life/Essential)</div>
+                    <div>Generator Backup: {crit.backup_generator_present ? 'Present (8 hrs)' : 'None'}</div>
+                    <div>Contact: {crit.contact_number || 'N/A'}</div>
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
+
+          {/* 5. Normally-Open Tie Switches */}
+          {topology.tie_switches.map((tie) => {
+            const fromSec = topology.sections.find(s => s.id === tie.from_section_id);
+            if (!fromSec) return null;
+            return (
+              <Marker
+                key={`tie-${tie.id}`}
+                position={[fromSec.end_latitude, fromSec.end_longitude]}
+                icon={createTieSwitchIcon(tie.switch_code)}
+              >
+                <Popup>
+                  <div className="text-xs p-1 space-y-1 text-slate-800">
+                    <div className="font-bold text-slate-900">Normally-Open Tie Switch</div>
+                    <div>Switch Code: <strong>{tie.switch_code}</strong></div>
+                    <div>State: <strong>NORMALLY OPEN (Radial Invariant)</strong></div>
+                    <div className="text-slate-600">Available for back-feed restoration on adjacent feeder.</div>
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
+        </MapContainer>
+
+        {/* Floating Status Legend */}
+        <div className="absolute bottom-4 right-4 bg-control-panel/95 border border-control-border backdrop-blur-md rounded-xl p-3 shadow-xl z-[1000] text-xs space-y-2 text-slate-300 w-56">
+          <div className="font-bold text-white text-[11px] uppercase tracking-wider pb-1 border-b border-control-border">
+            GIS Grid Legend
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3.5 h-1 bg-[#0284C7] rounded-full inline-block" />
+            <span>Energized 11kV Trunk</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3.5 h-1.5 bg-[#F97316] rounded-full inline-block animate-pulse" />
+            <span className="text-orange-400 font-bold">Topology Candidate</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3.5 h-1 bg-[#EF4444] rounded-full inline-block" />
+            <span>De-Energized Branch</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block border border-white" />
+            <span>Healthy DT (230V)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block border border-white" />
+            <span>Zero-Volt DT (Offline)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs">⚡</span>
+            <span>66/11kV Substation</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs">🚨</span>
+            <span className="text-rose-400 font-bold">Critical Load (Hospital/Pump)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-400">⚲ NO</span>
+            <span>Tie Switch (Normally Open)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

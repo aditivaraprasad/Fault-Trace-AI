@@ -1,0 +1,4 @@
+section_code,cluster_name,timestamp,complaint_type,phone,remarks
+F4-S14,Peenya Ind Sector 2,2026-11-18T14:16:30Z,NO_POWER,9845012345,Power cut near District Water Pumping Station
+F4-S14,Peenya Ind Sector 2,2026-11-18T14:17:15Z,NO_POWER,9845012346,Transformer tripped with spark on pole
+F4-S13,Hebbal 4th Block,2026-11-18T14:18:00Z,VOLTAGE_FLUCTUATION,9845012347,Lights flickering heavily

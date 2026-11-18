@@ -1,0 +1,5 @@
+asset_type,asset_identifier,health_index,condition_rating,failure_history_count,operating_temperature_c
+SECTION,F4-S14,64.2,POOR,3,68.5
+SECTION,F4-S12,71.0,FAIR,1,55.0
+TRANSFORMER,DT-14,68.5,FAIR,2,62.0
+TRANSFORMER,DT-12,88.0,GOOD,0,48.0
