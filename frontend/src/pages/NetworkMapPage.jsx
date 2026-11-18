@@ -2,63 +2,86 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import {
-  MapPin,
-  Zap,
-  Building,
-  Activity,
   Layers,
-  Filter,
   RefreshCw,
-  Info,
-  ShieldAlert,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { api } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
-import StatusBadge from '../components/StatusBadge';
 
-// Helper component to smoothly re-center map on filter changes
-function MapRecenter({ center }) {
+// Safe Leaflet object reference
+const leaflet = (typeof L !== 'undefined' && L && L.divIcon) ? L : (L?.default || (typeof window !== 'undefined' ? window.L : null) || L);
+
+// Helper component: forces Leaflet canvas recalculation (invalidateSize) and re-centers
+function MapResizerAndRecenter({ center }) {
   const map = useMap();
+
+  useEffect(() => {
+    // Invalidate size immediately, after 100ms, and 300ms to eliminate 0-height canvas in flex layouts
+    map.invalidateSize();
+    const t1 = setTimeout(() => map.invalidateSize(), 100);
+    const t2 = setTimeout(() => map.invalidateSize(), 300);
+    const handleResize = () => map.invalidateSize();
+    window.addEventListener('resize', handleResize);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [map]);
+
   useEffect(() => {
     if (center && Number.isFinite(center[0]) && Number.isFinite(center[1])) {
-      map.panTo(center);
+      map.setView(center, 13, { animate: true });
     }
   }, [center, map]);
+
   return null;
 }
 
-// Fix Leaflet DivIcon generators for Control-Room GIS
-const createSubstationIcon = (code) => L.divIcon({
-  className: 'custom-substation-icon',
-  html: `<div style="background-color: #0F172A; border: 2px solid #F59E0B; color: #F59E0B; border-radius: 6px; padding: 3px 6px; font-weight: bold; font-size: 10px; display: flex; align-items: center; gap: 3px; box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);">
-    <span>⚡</span><span>${code}</span>
-  </div>`,
-  iconSize: [60, 24],
-  iconAnchor: [30, 12],
-});
+// Custom DivIcons
+const createSubstationIcon = (code) => {
+  if (!leaflet || !leaflet.divIcon) return undefined;
+  return leaflet.divIcon({
+    className: 'custom-substation-icon',
+    html: `<div style="background-color: #0F172A; border: 2px solid #F59E0B; color: #F59E0B; border-radius: 6px; padding: 3px 6px; font-weight: bold; font-size: 10px; display: flex; align-items: center; gap: 3px; box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);">
+      <span>⚡</span><span>${code}</span>
+    </div>`,
+    iconSize: [60, 24],
+    iconAnchor: [30, 12],
+  });
+};
 
-const createCriticalLoadIcon = (name, tier) => L.divIcon({
-  className: 'custom-critical-icon',
-  html: `<div style="background-color: #7F1D1D; border: 2px solid #EF4444; color: #FEE2E2; border-radius: 6px; padding: 3px 6px; font-weight: bold; font-size: 10px; display: flex; align-items: center; gap: 4px; box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);">
-    <span>🚨</span><span>${name} [T${tier}]</span>
-  </div>`,
-  iconSize: [120, 24],
-  iconAnchor: [60, 12],
-});
+const createCriticalLoadIcon = (name, tier) => {
+  if (!leaflet || !leaflet.divIcon) return undefined;
+  return leaflet.divIcon({
+    className: 'custom-critical-icon',
+    html: `<div style="background-color: #7F1D1D; border: 2px solid #EF4444; color: #FEE2E2; border-radius: 6px; padding: 3px 6px; font-weight: bold; font-size: 10px; display: flex; align-items: center; gap: 4px; box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);">
+      <span>🚨</span><span>${name} [T${tier}]</span>
+    </div>`,
+    iconSize: [120, 24],
+    iconAnchor: [60, 12],
+  });
+};
 
-const createTieSwitchIcon = (code) => L.divIcon({
-  className: 'custom-tie-icon',
-  html: `<div style="background-color: #1E293B; border: 2px dashed #94A3B8; color: #E2E8F0; border-radius: 4px; padding: 2px 5px; font-size: 9px; font-weight: bold;">
-    <span>⚲ NO: ${code}</span>
-  </div>`,
-  iconSize: [80, 20],
-  iconAnchor: [40, 10],
-});
+const createTieSwitchIcon = (code) => {
+  if (!leaflet || !leaflet.divIcon) return undefined;
+  return leaflet.divIcon({
+    className: 'custom-tie-icon',
+    html: `<div style="background-color: #1E293B; border: 2px dashed #94A3B8; color: #E2E8F0; border-radius: 4px; padding: 2px 5px; font-size: 9px; font-weight: bold;">
+      <span>⚲ NO: ${code}</span>
+    </div>`,
+    iconSize: [80, 20],
+    iconAnchor: [40, 10],
+  });
+};
 
 export default function NetworkMapPage({ candidateSectionIds = [], affectedSectionIds = [] }) {
   const [topology, setTopology] = useState(null);
   const [selectedFeeder, setSelectedFeeder] = useState('ALL');
+  const [mapTheme, setMapTheme] = useState('osm'); // 'osm' (OpenStreetMap) | 'dark' (CartoDB)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -79,10 +102,6 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
       setLoading(false);
     }
   };
-
-  if (loading && !topology) return <LoadingSpinner message="Rendering GIS electrical network..." fullPage />;
-  if (error && !topology) return <ErrorMessage message={error} onRetry={loadTopology} className="m-6" />;
-  if (!topology) return null;
 
   // Compute map center dynamically from current sections or default to Hebbal
   const center = useMemo(() => {
@@ -106,8 +125,12 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
     return [13.0358, 77.5970];
   }, [topology]);
 
+  if (loading && !topology) return <LoadingSpinner message="Rendering GIS electrical network..." fullPage />;
+  if (error && !topology) return <ErrorMessage message={error} onRetry={loadTopology} className="m-6" />;
+  if (!topology) return null;
+
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col bg-control-bg">
+    <div className="h-[calc(100vh-4rem)] min-h-[700px] flex flex-col bg-control-bg">
       {/* Top Filter & Legend Bar */}
       <div className="bg-control-panel border-b border-control-border px-6 py-3 flex flex-wrap items-center justify-between gap-4 z-20">
         <div className="flex items-center gap-3">
@@ -118,10 +141,13 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
           <span className="text-[11px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded">
             Synthetic Coordinates (Bengaluru Grid Region)
           </span>
+          <span className="text-[11px] bg-emerald-950/40 text-emerald-300 border border-emerald-600/40 px-2 py-0.5 rounded font-mono">
+            {topology.sections.length} Sections &bull; {topology.transformers.length} DTs
+          </span>
         </div>
 
-        {/* Feeder Filter */}
-        <div className="flex items-center gap-4">
+        {/* Feeder Filter & Map Theme Toggle */}
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 font-medium">Filter Feeder:</span>
             <select
@@ -137,6 +163,25 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
               ))}
             </select>
           </div>
+
+          {/* Theme Toggle (OpenStreetMap vs Carto Dark) */}
+          <button
+            onClick={() => setMapTheme(mapTheme === 'osm' ? 'dark' : 'osm')}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-control-card border border-control-border text-slate-300 hover:text-white rounded-lg text-xs font-medium transition"
+            title="Toggle Map Tile Theme"
+          >
+            {mapTheme === 'osm' ? (
+              <>
+                <Moon className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Dark Tiles</span>
+              </>
+            ) : (
+              <>
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <span>Street Tiles</span>
+              </>
+            )}
+          </button>
 
           <button
             onClick={loadTopology}
@@ -156,13 +201,20 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
           scrollWheelZoom={true}
           style={{ height: '100%', minHeight: '600px', width: '100%', background: '#0B1120' }}
         >
-          <MapRecenter center={center} />
+          <MapResizerAndRecenter center={center} />
 
-          {/* Dark CartoDB tile layer */}
-          <TileLayer
-            attribution='&copy; <a href="https://carto.com/">CartoDB</a>'
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          />
+          {/* Map Tile Layer */}
+          {mapTheme === 'osm' ? (
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+          ) : (
+            <TileLayer
+              attribution='&copy; <a href="https://carto.com/">CartoDB</a>'
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            />
+          )}
 
           {/* 1. Feeder Sections (Polylines) */}
           {topology.sections.map((sec) => {
