@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from 'react-leaflet';
+import React, { useState, useEffect, useMemo } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import {
   MapPin,
@@ -16,6 +16,17 @@ import { api } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 import StatusBadge from '../components/StatusBadge';
+
+// Helper component to smoothly re-center map on filter changes
+function MapRecenter({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && Number.isFinite(center[0]) && Number.isFinite(center[1])) {
+      map.panTo(center);
+    }
+  }, [center, map]);
+  return null;
+}
 
 // Fix Leaflet DivIcon generators for Control-Room GIS
 const createSubstationIcon = (code) => L.divIcon({
@@ -73,8 +84,27 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
   if (error && !topology) return <ErrorMessage message={error} onRetry={loadTopology} className="m-6" />;
   if (!topology) return null;
 
-  // Center on Bangalore North Hebbal
-  const center = [13.0358, 77.5970];
+  // Compute map center dynamically from current sections or default to Hebbal
+  const center = useMemo(() => {
+    if (topology && topology.sections && topology.sections.length > 0) {
+      const valid = topology.sections.filter(s => 
+        (s.start_latitude && s.start_longitude) || 
+        (s.coordinates && s.coordinates[0] && Number.isFinite(s.coordinates[0][0]))
+      );
+      if (valid.length > 0) {
+        let totalLat = 0;
+        let totalLng = 0;
+        valid.forEach(s => {
+          const lat = s.start_latitude || s.coordinates[0][0];
+          const lng = s.start_longitude || s.coordinates[0][1];
+          totalLat += lat;
+          totalLng += lng;
+        });
+        return [totalLat / valid.length, totalLng / valid.length];
+      }
+    }
+    return [13.0358, 77.5970];
+  }, [topology]);
 
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col bg-control-bg">
@@ -119,15 +149,18 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
       </div>
 
       {/* Map Container */}
-      <div className="flex-1 relative">
+      <div className="flex-1 w-full relative min-h-[600px]" style={{ height: 'calc(100vh - 8rem)' }}>
         <MapContainer
           center={center}
           zoom={13}
-          style={{ height: '100%', width: '100%', background: '#0B1120' }}
+          scrollWheelZoom={true}
+          style={{ height: '100%', minHeight: '600px', width: '100%', background: '#0B1120' }}
         >
+          <MapRecenter center={center} />
+
           {/* Dark CartoDB tile layer */}
           <TileLayer
-            attribution='&copy; <a href="https://carto.com/">CartoDB</a> Dark Matter'
+            attribution='&copy; <a href="https://carto.com/">CartoDB</a>'
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           />
 
@@ -136,6 +169,18 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
             const isCandidate = candidateSectionIds.includes(sec.id);
             const isAffected = affectedSectionIds.includes(sec.id);
             const isDeEnergized = sec.status === 'DE_ENERGIZED' || isAffected;
+
+            let coords = null;
+            if (sec.coordinates && Array.isArray(sec.coordinates) && sec.coordinates.length === 2) {
+              coords = sec.coordinates;
+            } else if (sec.start_latitude && sec.start_longitude && sec.end_latitude && sec.end_longitude) {
+              coords = [[sec.start_latitude, sec.start_longitude], [sec.end_latitude, sec.end_longitude]];
+            }
+
+            if (!coords || !Number.isFinite(coords[0][0]) || !Number.isFinite(coords[0][1]) || 
+                !Number.isFinite(coords[1][0]) || !Number.isFinite(coords[1][1])) {
+              return null;
+            }
 
             let strokeColor = '#0284C7'; // Healthy trunk blue
             let strokeWidth = 3;
@@ -153,10 +198,7 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
             return (
               <Polyline
                 key={`sec-${sec.id}`}
-                positions={[
-                  [sec.start_latitude, sec.start_longitude],
-                  [sec.end_latitude, sec.end_longitude],
-                ]}
+                positions={coords}
                 pathOptions={{
                   color: strokeColor,
                   weight: strokeWidth,
@@ -187,26 +229,30 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
           })}
 
           {/* 2. Substations */}
-          {topology.substations.map((sub) => (
-            <Marker
-              key={`sub-${sub.id}`}
-              position={[sub.latitude, sub.longitude]}
-              icon={createSubstationIcon(sub.code)}
-            >
-              <Popup>
-                <div className="text-xs p-1 space-y-1 text-slate-800">
-                  <div className="font-bold text-base text-slate-900">{sub.name}</div>
-                  <div>Code: <strong>{sub.code}</strong></div>
-                  <div>Voltage: {sub.voltage_kv} kV</div>
-                  <div>Capacity: {sub.capacity_mva} MVA</div>
-                  <div>Division: {sub.division}</div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
+          {topology.substations.map((sub) => {
+            if (!Number.isFinite(sub.latitude) || !Number.isFinite(sub.longitude)) return null;
+            return (
+              <Marker
+                key={`sub-${sub.id}`}
+                position={[sub.latitude, sub.longitude]}
+                icon={createSubstationIcon(sub.code)}
+              >
+                <Popup>
+                  <div className="text-xs p-1 space-y-1 text-slate-800">
+                    <div className="font-bold text-base text-slate-900">{sub.name}</div>
+                    <div>Code: <strong>{sub.code}</strong></div>
+                    <div>Voltage: {sub.voltage_kv} kV</div>
+                    <div>Capacity: {sub.capacity_mva} MVA</div>
+                    <div>Division: {sub.division}</div>
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
 
           {/* 3. Distribution Transformers (Circle Markers) */}
           {topology.transformers.map((dt) => {
+            if (!Number.isFinite(dt.latitude) || !Number.isFinite(dt.longitude)) return null;
             const isOffline = dt.current_load_kva === 0;
             return (
               <CircleMarker
@@ -235,13 +281,20 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
 
           {/* 4. Critical Facilities */}
           {topology.critical_loads.map((crit) => {
-            // Find section coordinates
             const sec = topology.sections.find(s => s.id === crit.section_id);
             if (!sec) return null;
+            let lat = sec.end_latitude;
+            let lng = sec.end_longitude;
+            if ((!lat || !lng) && sec.coordinates && sec.coordinates[1]) {
+              lat = sec.coordinates[1][0];
+              lng = sec.coordinates[1][1];
+            }
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
             return (
               <Marker
                 key={`crit-${crit.id}`}
-                position={[sec.end_latitude, sec.end_longitude]}
+                position={[lat, lng]}
                 icon={createCriticalLoadIcon(crit.facility_name, crit.priority_tier)}
               >
                 <Popup>
@@ -261,10 +314,18 @@ export default function NetworkMapPage({ candidateSectionIds = [], affectedSecti
           {topology.tie_switches.map((tie) => {
             const fromSec = topology.sections.find(s => s.id === tie.from_section_id);
             if (!fromSec) return null;
+            let lat = fromSec.end_latitude;
+            let lng = fromSec.end_longitude;
+            if ((!lat || !lng) && fromSec.coordinates && fromSec.coordinates[1]) {
+              lat = fromSec.coordinates[1][0];
+              lng = fromSec.coordinates[1][1];
+            }
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
             return (
               <Marker
                 key={`tie-${tie.id}`}
-                position={[fromSec.end_latitude, fromSec.end_longitude]}
+                position={[lat, lng]}
                 icon={createTieSwitchIcon(tie.switch_code)}
               >
                 <Popup>

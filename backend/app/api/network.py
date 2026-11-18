@@ -41,11 +41,8 @@ def get_network_topology(
         for s in subs
     ]
 
-    # 2. Feeders
-    feeders_q = db.query(m.Feeder)
-    if feeder_id:
-        feeders_q = feeders_q.filter(m.Feeder.id == feeder_id)
-    feeders = feeders_q.all()
+    # 2. Feeders (always return all feeders for UI navigation and filtering)
+    all_feeders = db.query(m.Feeder).all()
     feeders_data = [
         {
             "id": f.id,
@@ -56,7 +53,7 @@ def get_network_topology(
             "status": f.status,
             "total_length_km": f.total_length_km,
         }
-        for f in feeders
+        for f in all_feeders
     ]
 
     # 3. Sections
@@ -76,6 +73,10 @@ def get_network_topology(
             "rated_capacity_kva": s.rated_capacity_kva,
             "conductor_type": s.conductor_type,
             "status": s.status,
+            "start_latitude": s.start_latitude,
+            "start_longitude": s.start_longitude,
+            "end_latitude": s.end_latitude,
+            "end_longitude": s.end_longitude,
             "coordinates": [[s.start_latitude, s.start_longitude], [s.end_latitude, s.end_longitude]],
         }
         for s in sections
